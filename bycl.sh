@@ -23,6 +23,7 @@ CHROOT=/usr/sbin/chroot
 DEBOOTSTRAP=/usr/sbin/debootstrap
 DPKG_DEB=/usr/bin/dpkg-deb
 DPKG_RECONFIGURE=/usr/sbin/dpkg-reconfigure
+FAKECHROOT=/usr/bin/fakechroot
 FIND=/usr/bin/find
 GIT=/usr/bin/git
 GPG=/usr/bin/gpg
@@ -34,9 +35,13 @@ WGET=/usr/bin/wget
 NB_CORES=$(grep -c '^processor' /proc/cpuinfo)
 
 # Default value 
+ARCH=amd64
 DEST_PATH=bycl
 LXC_VERSION=2.0.0
+MIRROR=http://ftp.fr.debian.org/debian
+SUITE=unstable
 TMP_PATH=/tmp
+VARIANT=minbase     # minbase, buildd, fakechroot, scratchbox
 
 USAGE="$(basename "${0}") [options] <COMMAND> DEVICE\n\n
 \tDEVICE\tTarget device or path name\n\n
@@ -45,21 +50,24 @@ USAGE="$(basename "${0}") [options] <COMMAND> DEVICE\n\n
 \t\tinstall\tInstall lxc\n
 \t\tupdate\tUpdate lxc container\n\n
 \tinstall options:\n
-\t--------------\n
-\t\t-d, --deb\t\tCreate Debian package archive\n
+\t----------------\n
+\t\t-a=NAME, --variant=NAME\tName of the variant (minbase, buildd, fakeroot, scratchbox,...) (default=${VARIANT})\n\n
 \t\t-g=PATH, --git=PATH\tGit path to get the lxc archive\n
 \t\t-l=PATH, --local=PATH\tPath to get the lxc archive (instead of official LXC Archives URL)\n
+\t\t-m=PATH, --mirror=PATH\tCan be an http:// URL, a file:/// URL, or an ssh:/// URL (default=${MIRROR})\n
 \t\t-n, --nodelete\t\tKeep temporary files\n
 \t\t-p=PATH, --path=PATH\tPath to install system (default=${DEST_PATH})\n
+\t\t-s=NAME, --suite=NAME\tName of the suite (lenny, squeeze, sid,...) (default=${SUITE})\n\n
 \t\t-t=PATH, --temp=PATH\tTemporary folder (default=${TMP_PATH})\n\n
 \t\t-v=VERSION, --version=VERSION\tVersion of lxc (default=${LXC_VERSION})\n\n
 \tupdate options:\n
-\t--------------\n
-\t\t-d, --deb\t\tCreate Debian package archive\n\n
+\t---------------\n
 \toptions:\n
 \t--------\n
+\t\t-d, --deb\t\tCreate Debian package archive\n
 \t\t-f=FILE, --file=FILE\tConfiguration file\n
-\t\t-h, --help\t\tDisplay this message"
+\t\t-h, --help\t\tDisplay this message\n\n
+\t\t-r=NAME, --arch=NAME\tArchitecture name (i386, arm, amd64,...) (default=${ARCH})"
 
 #########################################
 # Print help
@@ -74,6 +82,11 @@ print_help() {
 parse_command_line() {
   for i in "$@"; do
     case ${i} in
+      -a=*|--variant=*)
+        VARIANT="${i#*=}"
+        shift
+        ;;
+  
       -d|--deb)
         DEB=1
         shift
@@ -114,6 +127,11 @@ parse_command_line() {
   
       -p=*|--path=*)
         DEST_PATH="${i#*=}"
+        shift
+        ;;
+  
+      -r=*|--arch=*)
+        ARCH="${i#*=}"
         shift
         ;;
   
@@ -322,15 +340,16 @@ EOF
 # Build distribution (system)
 #########################################
 build_system() {
-  # Add Systemd and locale packages
-  INCLUDE=${INCLUDE},systemd,systemd-sysv,locales
+  # Add and remove packages
+  EXCLUDE=
+  INCLUDE=,systemd,systemd-sysv,locales
   
   # Install Debian base system
   DEBOOTSTRAP_OPTIONS="--arch=${ARCH} --include=${INCLUDE} --variant=${VARIANT}"
   if [ -n "${EXCLUDE}" ]; then
     DEBOOTSTRAP_OPTIONS="${DEBOOTSTRAP_OPTIONS} --exclude=${EXCLUDE}"
   fi
-  ${DEBOOTSTRAP} ${DEBOOTSTRAP_OPTIONS} ${SUITE} ${DEST_PATH} ${MIRROR}
+  ${FAKECHROOT} fakeroot ${DEBOOTSTRAP} ${DEBOOTSTRAP_OPTIONS} ${SUITE} ${DEST_PATH} ${MIRROR}
   if [ $? -ne 0 ]; then
     return 1
   fi
@@ -437,14 +456,21 @@ if [ $? -ne 0 ]; then
   exit 1   
 fi
 
-## Build system
-#if [ "${COMMAND}" == "build" ]; then
-#  build_system
-#  if [ $? -ne 0 ]; then
-#    exit 1   
-#  fi
-#fi
-#
+# Build root filesystem of guest
+if [ "${COMMAND}" == "install" ] && [ -z "${DEB}" ]; then
+  # Set HOSTNAME and root password of guest
+  HOSTNAME=lxc
+  ROOT_PASSWD=root
+
+  # Update DEST_PATH
+  DEST_PATH=${DEST_PATH}/var/lib/lxc/rootfs
+  ${MKDIR} -p ${DEST_PATH}
+  build_system
+  if [ $? -ne 0 ]; then
+    exit 1   
+  fi
+fi
+
 ## Binding the virtual filesystems
 #${MOUNT} --bind /dev ${DEST_PATH}/dev
 #${MOUNT} -t proc none ${DEST_PATH}/proc
