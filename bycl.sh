@@ -49,6 +49,7 @@ USAGE="$(basename "${0}") [options] <COMMAND> DEVICE\n\n
 \t\t-d, --deb\t\tCreate Debian package archive\n
 \t\t-g=PATH, --git=PATH\tGit path to get the lxc archive\n
 \t\t-l=PATH, --local=PATH\tPath to get the lxc archive (instead of official LXC Archives URL)\n
+\t\t-n, --nodelete\t\tKeep temporary files\n
 \t\t-p=PATH, --path=PATH\tPath to install system (default=${DEST_PATH})\n
 \t\t-t=PATH, --temp=PATH\tTemporary folder (default=${TMP_PATH})\n\n
 \t\t-v=VERSION, --version=VERSION\tVersion of lxc (default=${LXC_VERSION})\n\n
@@ -75,6 +76,7 @@ parse_command_line() {
     case ${i} in
       -d|--deb)
         DEB=1
+        shift
         ;;
   
       -f=*|--file=*)
@@ -102,6 +104,11 @@ parse_command_line() {
   
       -l=*|--local=*)
         LXC_PATH="${i#*=}"
+        shift
+        ;;
+  
+      -n|--nodelete)
+        NO_DELETE=1
         shift
         ;;
   
@@ -245,19 +252,20 @@ build_lxc() {
     pushd ${TMP_PATH}/${LXC_NAME} > /dev/null || exit 1
   fi
   
-  ## Define and create output directory
-  #KBUILD_OUTPUT=${TMP_PATH}/kernel-build-${KERNEL_VERSION}
-  #${MKDIR} -p ${KBUILD_OUTPUT}
-    
   # Define install folder
   if [ -n "${DEB}" ]; then
-    INSTALL_PATH=${TMP_PATH}/lxc-deb-${LXC_VERSION}
+    INSTALL_PATH=${TMP_PATH}/lxc
   else
     INSTALL_PATH=${DEST_PATH}
   fi
  
   # Set lxc configuration
-  CONFIGURE_OPTS="--disable-doc --disable-api-docs --disable-examples --with-init-script=systemd --prefix=${INSTALL_PATH}"
+  CONFIGURE_OPTS="--disable-doc
+                  --disable-api-docs
+                  --disable-examples
+                  --with-init-script=systemd
+                  --prefix=${INSTALL_PATH}
+                  --with-systemdsystemunitdir=${INSTALL_PATH}/lib/systemd/system"
   ./configure ${CONFIGURE_OPTS}
 
   # Build and install lxc
@@ -266,63 +274,44 @@ build_lxc() {
   ${MAKE} install
   
   popd > /dev/null
-#  
-#  # Create Debian package 
-#  if [ -n "${DEB}" ]; then
-#    ${MKDIR} -p kernel-${KERNEL_VERSION}/DEBIAN
-#      
-#    ${CAT} > kernel-${KERNEL_VERSION}/DEBIAN/control << EOF
-#Package: kernel
-#Version: ${KERNEL_VERSION}
-#Section: kernel
-#Priority: optional
-#Essential: no
-#Architecture: amd64
-#Maintainer: David DIALLO
-#Provides: linux-image
-#Description: Linux kernel, version ${KERNEL_VERSION}
-#This package contains the Linux kernel, modules and corresponding other
-#files, version: ${KERNEL_VERSION}
-#EOF
-#      
-#    ${CAT} > kernel-${KERNEL_VERSION}/DEBIAN/postinst << EOF
-#rm -f /boot/initrd.img-${KERNEL_VERSION}
-#update-initramfs -c -k ${KERNEL_VERSION}
-#EOF
-#      
-#    ${CAT} > kernel-${KERNEL_VERSION}/DEBIAN/postrm << EOF
-#rm -f /boot/initrd.img-${KERNEL_VERSION}
-#EOF
-#     
-#    ${CAT} > kernel-${KERNEL_VERSION}/DEBIAN/triggers << EOF
-#interest update-initramfs
-#EOF
-#      
-#    ${CHMOD} 755 kernel-${KERNEL_VERSION}/DEBIAN/postinst kernel-${KERNEL_VERSION}/DEBIAN/postrm
-#      
-#    ${FAKEROOT} ${DPKG_DEB} --build kernel-${KERNEL_VERSION}
-#      
-#    # Copy Debian package 
-#    ${CP} kernel-${KERNEL_VERSION}.deb ${DEST_PATH}
-#  
-#    # Delete Debian package and install folder
-#    if [ -z "${NO_DELETE}" ]; then
-#      ${RM} kernel-${KERNEL_VERSION}.deb
-#      ${RM} -rf kernel-${KERNEL_VERSION}
-#    fi
-#  fi
-#  
-#  # Delete temporary files
-#  if [ -z "${NO_DELETE}" ]; then
-#    # Delete kernel archive and decompressed kernel archive
-#    if [ -n "${GIT_PATH}" ]; then
-#      ${RM} ${KERNEL_TAR}
-#      ${RM} ${KERNEL_TAR}.sign
-#    fi
-#  
-#    ${RM} -rf ${KERNEL_NAME}
-#    ${RM} -rf ${KBUILD_OUTPUT}
-#  fi
+  
+  # Create Debian package 
+  if [ -n "${DEB}" ]; then
+    ${MKDIR} -p lxc/DEBIAN
+      
+    ${CAT} > lxc/DEBIAN/control << EOF
+Package: lxc 
+Version: ${LXC_VERSION}
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: David DIALLO
+Description: Linux Containers userspace tools
+ This package provides the lxc-* tools, which can be used to start a single
+ daemon in a container.
+EOF
+      
+    ${DPKG_DEB} --build lxc
+      
+    # Copy Debian package 
+    ${CP} lxc.deb ${DEST_PATH}
+  
+    ## Delete Debian package and install folder
+    if [ -z "${NO_DELETE}" ]; then
+      ${RM} lxc.deb
+      ${RM} -rf lxc
+    fi
+  fi
+  
+  # Delete temporary files
+  if [ -z "${NO_DELETE}" ]; then
+    # Delete lxc archive and decompressed lxc archive
+    if [ -z "${GIT_PATH}" ] && [ -z "${LXC_PATH}"]; then
+      ${RM} ${LXC_TAR}.{gz.asc,gz}
+    fi
+  
+    ${RM} -rf ${LXC_NAME}
+  fi
   
   popd > /dev/null
 
