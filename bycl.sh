@@ -251,6 +251,9 @@ build_lxc() {
     
       # Initialize GPG keyrings
       ${PRINTF} "" | ${GPG}
+
+      # Check if awk installed
+      command -v ${AWK} >/dev/null 2>&1 || { ${ECHO} >&2 "awk but it's not installed. Aborting."; exit 1; }
       
       # Download GPG keys
       GPG_KEYSERVER=keyserver.ubuntu.com 
